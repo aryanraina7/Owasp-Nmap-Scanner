@@ -1,0 +1,84 @@
+trigger:
+- main  # Adjust to your branch name if needed
+
+pool:
+  name: ARM  # Use the appropriate agent pool name you set; ensure it’s your self-hosted agent 
+
+variables:
+- group: 'owaspvariables'  # Reference to the variable group containing both OWASP and Nmap variables; refer step 6
+
+stages:
+- stage: VulnerabilityScanning
+  displayName: 'Run Vulnerability Scanning'
+  jobs:
+  - job: OWASPZAPScan
+    displayName: 'Perform OWASP ZAP Vulnerability Scan'
+    steps:
+    - script: |
+        echo "Checking Docker Version:"
+        docker --version
+        echo "Pulling OWASP ZAP Docker Image:"
+        docker pull zaproxy/zap-stable
+        echo "Running OWASP ZAP Scan with Increased Timeout:"
+        # Run OWASP ZAP scan using variables from the group with increased timeout
+        docker run --rm -v $(System.DefaultWorkingDirectory):/zap/wrk/:rw -t zaproxy/zap-stable zap-full-scan.py -t "$(TARGET_URL)" -r /zap/wrk/"$(HTML_REPORT_NAME)" -x /zap/wrk/"$(XML_REPORT_NAME)" -z "-timeout 60000" || true
+      displayName: 'Run OWASP ZAP Scan'
+    
+    - task: PublishBuildArtifacts@1
+      inputs:
+        pathToPublish: '$(System.DefaultWorkingDirectory)/$(HTML_REPORT_NAME)'
+        artifactName: 'ZAPReportHTML'
+      displayName: 'Publish OWASP ZAP HTML Report'
+    
+    - task: PublishBuildArtifacts@1
+      inputs:
+        pathToPublish: '$(System.DefaultWorkingDirectory)/$(XML_REPORT_NAME)'
+        artifactName: 'ZAPReportXML'
+      displayName: 'Publish OWASP ZAP XML Report'
+
+  - job: NmapScan
+    displayName: 'Perform Nmap Scan'
+    dependsOn: OWASPZAPScan  # Ensure Nmap scan runs after OWASP ZAP scan
+    steps:
+    - script: |
+        echo "Checking Docker Version:"
+        docker --version
+        echo "Pulling Nmap Docker Image:"
+        docker pull instrumentisto/nmap
+        echo "Running Nmap Scan with options: -T4 -F on $(nmapTarget)"
+        # Run Nmap scan with options -T4 -F
+        docker run --rm -v $(System.DefaultWorkingDirectory):/nmap/ instrumentisto/nmap -sV --version-all -T4 -F -oN /nmap/$(outputFile1) $(nmapTarget) || true
+        echo "Running Nmap Vulnerability Script Scan on $(nmapTarget)"
+        # Run Nmap vulnerability script scan
+        docker run --rm -v $(System.DefaultWorkingDirectory):/nmap/ instrumentisto/nmap --script vuln -oN /nmap/$(outputFile2) $(nmapTarget) || true
+        echo "Running Nmap Primary Scan with options: -A on $(nmapTarget)"
+        # Run Nmap primary scan with options -A
+        docker run --rm -v $(System.DefaultWorkingDirectory):/nmap/ instrumentisto/nmap -A -oN /nmap/$(outputFile3) $(nmapTarget) || true
+        echo "Running Nmap Version Detection Scan with options: -sV --version-all on $(nmapTarget)"
+        # Run Nmap version detection scan with options -sV --version-all
+        docker run --rm -v $(System.DefaultWorkingDirectory):/nmap/ instrumentisto/nmap -sV --version-all -oN /nmap/$(outputFile4) $(nmapTarget) || true
+      displayName: 'Run Nmap Scans'
+    
+    - task: PublishBuildArtifacts@1
+      inputs:
+        pathToPublish: '$(System.DefaultWorkingDirectory)/$(outputFile1)'
+        artifactName: 'NmapScan1Results'
+      displayName: 'Publish Nmap Scan 1 Results'
+    
+    - task: PublishBuildArtifacts@1
+      inputs:
+        pathToPublish: '$(System.DefaultWorkingDirectory)/$(outputFile2)'
+        artifactName: 'NmapScan2Results'
+      displayName: 'Publish Nmap Vulnerability Script Scan Results'
+    
+    - task: PublishBuildArtifacts@1
+      inputs:
+        pathToPublish: '$(System.DefaultWorkingDirectory)/$(outputFile3)'
+        artifactName: 'NmapScan3Results'
+      displayName: 'Publish Nmap Scan 3 Results'
+    
+    - task: PublishBuildArtifacts@1
+      inputs:
+        pathToPublish: '$(System.DefaultWorkingDirectory)/$(outputFile4)'
+        artifactName: 'NmapScan4Results'
+      displayName: 'Publish Nmap Version Detection Scan Results'
